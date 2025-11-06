@@ -1,0 +1,194 @@
+<div class="dashboard-container">
+  <header class="dashboard-header">
+    <h1>🌍 Tourisme Éco-Responsable</h1>
+    <p class="subtitle">Plateforme de Web Sémantique avec Ontologie OWL</p>
+    <div class="api-status" [class.connected]="apiStatus.includes('✓')">
+      API: {{ apiStatus }}
+    </div>
+  </header>
+
+  <div *ngIf="loading" class="loading">
+    <p>Chargement des données...</p>
+  </div>
+
+  <div *ngIf="!loading">
+    <section class="stats-section">
+      <h2>📊 Statistiques de l'Ontologie</h2>
+      <div class="stats-cards">
+        <div class="stat-card">
+          <div class="stat-number">{{ stats.classes }}</div>
+          <div class="stat-label">Classes</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">{{ stats.properties }}</div>
+          <div class="stat-label">Propriétés</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">{{ stats.individuals }}</div>
+          <div class="stat-label">Individus</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">{{ destinations.length }}</div>
+          <div class="stat-label">Destinations</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">{{ hebergements.length }}</div>
+          <div class="stat-label">Hébergements</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">{{ activites.length }}</div>
+          <div class="stat-label">Activités</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <h2>🏝️ Destinations</h2>
+      <div class="cards-grid">
+        <div *ngFor="let dest of destinations" class="data-card">
+          <h3>{{ dest.nom || extractClassName(dest.uri) }}</h3>
+          <p><strong>Type:</strong> {{ extractClassName(dest.type || '') }}</p>
+          <small class="uri">{{ dest.uri }}</small>
+        </div>
+        <div *ngIf="destinations.length === 0" class="no-data">
+          Aucune destination trouvée
+        </div>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <h2>🏨 Hébergements</h2>
+      <div class="cards-grid">
+        <div *ngFor="let heb of hebergements" class="data-card">
+          <h3>{{ heb.nom || extractClassName(heb.uri) }}</h3>
+          <p><strong>Type:</strong> {{ extractClassName(heb.type || '') }}</p>
+          <p *ngIf="heb.certification">
+            <span class="certification">🌿 {{ heb.certification }}</span>
+          </p>
+          <small class="uri">{{ heb.uri }}</small>
+        </div>
+        <div *ngIf="hebergements.length === 0" class="no-data">
+          Aucun hébergement trouvé
+        </div>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <h2>🚶 Activités Touristiques</h2>
+      <div class="cards-grid">
+        <div *ngFor="let act of activites" class="data-card">
+          <h3>{{ act.nom || extractClassName(act.uri) }}</h3>
+          <p><strong>Type:</strong> {{ extractClassName(act.type || '') }}</p>
+          <p *ngIf="act.duree">
+            <strong>Durée:</strong> {{ act.duree }} heures
+          </p>
+          <p *ngIf="act.empreinte !== null">
+            <strong>Empreinte carbone:</strong> 
+            <span [class.low-carbon]="act.empreinte < 50" 
+                  [class.high-carbon]="act.empreinte >= 50">
+              {{ act.empreinte }} kg CO2
+            </span>
+          </p>
+          <small class="uri">{{ act.uri }}</small>
+        </div>
+        <div *ngIf="activites.length === 0" class="no-data">
+          Aucune activité trouvée
+        </div>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <h2>🚲 Moyens de Transport</h2>
+      <div class="cards-grid">
+        <div *ngFor="let trans of transports" class="data-card">
+          <h3>{{ extractClassName(trans.type || trans.uri) }}</h3>
+          <p *ngIf="trans.empreinte !== null">
+            <strong>Empreinte carbone:</strong>
+            <span [class.low-carbon]="trans.empreinte < 50" 
+                  [class.high-carbon]="trans.empreinte >= 50">
+              {{ trans.empreinte }} kg CO2
+            </span>
+          </p>
+          <small class="uri">{{ trans.uri }}</small>
+        </div>
+        <div *ngIf="transports.length === 0" class="no-data">
+          Aucun transport trouvé
+        </div>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <h2>🛎️ Services</h2>
+      <div class="cards-grid">
+        <div *ngFor="let service of services" class="data-card">
+          <h3>{{ service.nom || extractClassName(service.uri) }}</h3>
+          <p *ngIf="service.prix !== null">
+            <strong>Prix:</strong> {{ service.prix }}€
+          </p>
+          <small class="uri">{{ service.uri }}</small>
+        </div>
+        <div *ngIf="services.length === 0" class="no-data">
+          Aucun service trouvé
+        </div>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <h2>🍽️ Nourriture</h2>
+      <div class="cards-grid">
+        <div *ngFor="let nourriture of nourritures" class="data-card">
+          <h3>{{ nourriture.nom || extractClassName(nourriture.uri) }}</h3>
+          <small class="uri">{{ nourriture.uri }}</small>
+        </div>
+        <div *ngIf="nourritures.length === 0" class="no-data">
+          Aucune nourriture trouvée
+        </div>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <h2>🎒 Équipements</h2>
+      <div class="cards-grid">
+        <div *ngFor="let equipement of equipements" class="data-card">
+          <h3>{{ equipement.nom || extractClassName(equipement.uri) }}</h3>
+          <small class="uri">{{ equipement.uri }}</small>
+        </div>
+        <div *ngIf="equipements.length === 0" class="no-data">
+          Aucun équipement trouvé
+        </div>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <h2>👥 Personnes</h2>
+      <div class="cards-grid">
+        <div *ngFor="let personne of personnes" class="data-card">
+          <h3>{{ personne.nom || extractClassName(personne.uri) }}</h3>
+          <p *ngIf="personne.age !== null">
+            <strong>Âge:</strong> {{ personne.age }} ans
+          </p>
+          <small class="uri">{{ personne.uri }}</small>
+        </div>
+        <div *ngIf="personnes.length === 0" class="no-data">
+          Aucune personne trouvée
+        </div>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <h2>🏆 Certifications Éco</h2>
+      <div class="cards-grid">
+        <div *ngFor="let cert of certifications" class="data-card">
+          <h3>{{ cert.nom || extractClassName(cert.uri) }}</h3>
+          <p *ngIf="cert.dateValidite">
+            <strong>Validité:</strong> {{ cert.dateValidite }}
+          </p>
+          <small class="uri">{{ cert.uri }}</small>
+        </div>
+        <div *ngIf="certifications.length === 0" class="no-data">
+          Aucune certification trouvée
+        </div>
+      </div>
+    </section>
+  </div>
+</div>

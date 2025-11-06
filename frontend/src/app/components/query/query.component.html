@@ -1,0 +1,79 @@
+<div class="query-container">
+  <h2>💬 Posez votre question ou effectuez une action</h2>
+  
+  <div class="predefined-questions">
+    <h3>📋 Questions prédéfinies :</h3>
+    <div class="questions-list">
+      <button 
+        *ngFor="let q of predefinedQuestions" 
+        class="question-btn"
+        (click)="selectQuestion(q)">
+        {{ q }}
+      </button>
+    </div>
+  </div>
+
+  <div class="crud-examples">
+    <h3>🔧 Exemples d'opérations CRUD :</h3>
+    <div class="examples-list">
+      <div *ngFor="let example of crudExamples" class="example-item">
+        {{ example }}
+      </div>
+    </div>
+  </div>
+
+  <div class="question-input">
+    <label for="question">Votre question ou commande :</label>
+    <textarea 
+      id="question"
+      [(ngModel)]="question" 
+      placeholder="Ex: Ajoute une personne Paul qui a 28 ans, ou Quelles sont toutes les destinations ?"
+      rows="3">
+    </textarea>
+    <button 
+      class="ask-btn" 
+      (click)="askQuestion()" 
+      [disabled]="loading">
+      {{ loading ? '⏳ Traitement...' : '🚀 Exécuter' }}
+    </button>
+  </div>
+
+  <div *ngIf="successMessage" class="success-message">
+    <strong>✅ Succès :</strong> {{ successMessage }}
+    <button class="close-btn" (click)="clearMessages()">✖</button>
+  </div>
+
+  <div *ngIf="error" class="error-message">
+    <strong>❌ Erreur :</strong> {{ error }}
+    <button class="close-btn" (click)="clearMessages()">✖</button>
+  </div>
+
+  <div *ngIf="sparqlQuery" class="sparql-display">
+    <h3>Requête SPARQL générée :</h3>
+    <pre>{{ sparqlQuery }}</pre>
+  </div>
+
+  <div *ngIf="results.length > 0" class="results">
+    <h3>Résultats ({{ results.length }}) :</h3>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th *ngFor="let key of getResultKeys()">{{ key }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let result of results">
+            <td *ngFor="let key of getResultKeys()">
+              {{ result[key] || '-' }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div *ngIf="!loading && results.length === 0 && !error && sparqlQuery" class="no-results">
+    Aucun résultat trouvé.
+  </div>
+</div>

@@ -1,0 +1,20 @@
+﻿<div class="app-container">
+  <nav class="navbar">
+    <div class="nav-brand">
+      <h1> Tourisme Éco-Responsable</h1>
+    </div>
+    <div class="nav-links">
+      <a routerLink="/dashboard" routerLinkActive="active">Tableau de bord</a>
+      <a routerLink="/query" routerLinkActive="active">Poser une question</a>
+    </div>
+  </nav>
+
+  <main class="main-content">
+    <router-outlet></router-outlet>
+  </main>
+
+  <footer class="footer">
+    <p>Web Sémantique - Ontologie OWL + SPARQL + Angular</p>
+    <p>Architecture: Frontend (Angular)  API  Backend (Python + RDFLib)  Fuseki</p>
+  </footer>
+</div>
