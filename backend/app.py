@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from rdflib import Graph, Namespace, URIRef, Literal, RDF, XSD
+from rdflib import Graph, Namespace, URIRef, Literal, RDF, RDFS, OWL, XSD
 from rdflib.plugins.sparql import prepareQuery
 from SPARQLWrapper import SPARQLWrapper, JSON
 import json
@@ -67,6 +67,30 @@ print("📚 Chargement de l'ontologie en mémoire avec RDFLib...")
 g = Graph()
 g.parse("../ws.rdf", format="xml")
 print("✅ Ontologie chargée avec succès!")
+
+def reload_graph():
+    """Recharger le graphe RDF depuis ws.rdf"""
+    global g
+    try:
+        temp_graph = Graph()
+        temp_graph.parse("../ws.rdf", format="xml")
+        
+        # Remplacer le graphe global
+        g = temp_graph
+        
+        # Réenregistrer les namespaces
+        g.bind("default1", NS)
+        g.bind("rdf", RDF)
+        g.bind("rdfs", RDFS)
+        g.bind("owl", OWL)
+        g.bind("xsd", XSD)
+        
+        # Log simplifie sans caracteres speciaux
+        triplet_count = len(g)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Erreur lors du rechargement: {e}")
+        return False
 
 def execute_sparql(query):
     """Exécute une requête SPARQL sur Fuseki ou RDFLib et retourne un format uniforme"""
@@ -500,8 +524,142 @@ def natural_language_query():
     # DÉTECTION D'INTENTIONS CRUD
     # ========================================
     
+    # Détecter les relations EN PREMIER (avant "ajouter" pour éviter confusion avec "Ajoute une relation X possede Y")
+    if any(word in question_lower for word in [' va à ', ' va a ', ' visite ', ' choisit ', ' séjourne dans ', ' utilise ', 'possede', 'possède', ' a la certification', ' a une certification']):
+        # RECHARGER LE GRAPHE AVANT DE TRAITER LA RELATION
+        print("[DEBUG] RELOAD avant traitement relation")
+        reload_graph()
+        print(f"[DEBUG] Graphe recharge - {len(g)} triplets en memoire")
+        try:
+            if gemini_model:
+                prompt = f"""
+Extrais les informations de cette demande de relation entre entités:
+Question: "{question}"
+
+Tu dois retourner UNIQUEMENT un objet JSON avec:
+- sujet_type: le type du sujet parmi (Personne, Destination, Hébergement, ActivitéTouristique, Transport, Services, Nourriture, Equipement, CertificationÉco)
+- sujet_nom: le nom du sujet
+- relation: la propriété de relation (choisitDestination, séjourneDans, utilise, possèdeCertification, etc.)
+- objet_type: le type de l'objet parmi (Personne, Destination, Hébergement, ActivitéTouristique, Transport, Services, Nourriture, Equipement, CertificationÉco)
+- objet_nom: le nom de l'objet
+
+TYPES D'ENTITES:
+- Personne: voyageurs, touristes
+- Destination: pays, villes, lieux
+- Hébergement: hôtels, auberges
+- ActivitéTouristique: surf, randonnée, plongée, ski, kayak, escalade, etc.
+- Transport: bus, taxi, bateau, jet-ski, téléphérique, train, etc.
+- Services: wifi, spa, restaurant
+- Nourriture: plats, boissons
+- Equipement: matériel, outils
+- CertificationÉco: labels écologiques
+
+Exemples:
+"oumayma va à la Tunisie" -> {{"sujet_type": "Personne", "sujet_nom": "oumayma", "relation": "choisitDestination", "objet_type": "Destination", "objet_nom": "Tunisie"}}
+"Jean séjourne dans Hotel Paris" -> {{"sujet_type": "Personne", "sujet_nom": "Jean", "relation": "séjourneDans", "objet_type": "Hébergement", "objet_nom": "Hotel Paris"}}
+"Hotel Keops possede la certification ISO 2027" -> {{"sujet_type": "Hébergement", "sujet_nom": "Hotel Keops", "relation": "possèdeCertification", "objet_type": "CertificationÉco", "objet_nom": "ISO 2027"}}
+"Surf utilise Jet-Ski" -> {{"sujet_type": "ActivitéTouristique", "sujet_nom": "Surf", "relation": "utilise", "objet_type": "Transport", "objet_nom": "Jet-Ski"}}
+
+Réponds UNIQUEMENT avec le JSON.
+"""
+                response = gemini_model.generate_content(prompt)
+                json_str = response.text.strip().replace('```json', '').replace('```', '').strip()
+                print(f"[DEBUG] Gemini JSON brut: {json_str}")
+                relation_data = json.loads(json_str)
+                print(f"[DEBUG] Relation parsed: {relation_data}")
+                
+                # Mapping des propriétés nom
+                name_property_map = {
+                    'Personne': 'nomVoyageur',
+                    'Destination': 'nomDestination',
+                    'Hébergement': 'nomHebergement',
+                    'ActivitéTouristique': 'nomActivité',
+                    'Transport': 'nomTransport',
+                    'Services': 'nomService',
+                    'Nourriture': 'nomNourriture',
+                    'Equipement': 'nomEquipement',
+                    'CertificationÉco': 'nomCertification'
+                }
+                
+                # Trouver le sujet
+                sujet_uri = None
+                sujet_type = relation_data['sujet_type']
+                sujet_nom = relation_data['sujet_nom'].lower()
+                
+                if sujet_type in name_property_map:
+                    name_prop = NS[name_property_map[sujet_type]]
+                    type_uri = NS[sujet_type]
+                    print(f"[DEBUG] Recherche sujet: type={sujet_type}, nom={sujet_nom}")
+                    for s, p, o in g.triples((None, RDF.type, type_uri)):
+                        for _, _, nom in g.triples((s, name_prop, None)):
+                            print(f"[DEBUG] Compare: '{str(nom).lower()}' == '{sujet_nom}' ?")
+                            if str(nom).lower() == sujet_nom:
+                                sujet_uri = s
+                                print(f"[DEBUG] TROUVE sujet: {s}")
+                                break
+                        if sujet_uri:
+                            break
+                
+                if not sujet_uri:
+                    return jsonify({
+                        "success": False,
+                        "error": f"Entité sujet '{relation_data['sujet_nom']}' non trouvée"
+                    }), 404
+                
+                # Trouver l'objet
+                objet_uri = None
+                objet_type = relation_data['objet_type']
+                objet_nom = relation_data['objet_nom'].lower()
+                
+                if objet_type in name_property_map:
+                    name_prop = NS[name_property_map[objet_type]]
+                    type_uri = NS[objet_type]
+                    for s, p, o in g.triples((None, RDF.type, type_uri)):
+                        for _, _, nom in g.triples((s, name_prop, None)):
+                            if str(nom).lower() == objet_nom:
+                                objet_uri = s
+                                break
+                        if objet_uri:
+                            break
+                
+                if not objet_uri:
+                    return jsonify({
+                        "success": False,
+                        "error": f"Entité objet '{relation_data['objet_nom']}' non trouvée"
+                    }), 404
+                
+                # Ajouter la relation
+                relation_prop = NS[relation_data['relation']]
+                g.add((sujet_uri, relation_prop, objet_uri))
+                
+                # Sauvegarder
+                print(f"[DEBUG] AVANT save_rdf_to_file() - Relation {relation_data.get('sujet_nom')} -> {relation_data.get('objet_nom')}")
+                if save_rdf_to_file():
+                    return jsonify({
+                        "success": True,
+                        "action": "add_relation",
+                        "message": f"✅ Relation ajoutée: '{relation_data['sujet_nom']}' {relation_data['relation']} '{relation_data['objet_nom']}'",
+                        "relation": {
+                            "sujet": {"type": sujet_type, "nom": relation_data['sujet_nom'], "uri": str(sujet_uri)},
+                            "propriete": relation_data['relation'],
+                            "objet": {"type": objet_type, "nom": relation_data['objet_nom'], "uri": str(objet_uri)}
+                        }
+                    })
+                else:
+                    return jsonify({
+                        "success": False,
+                        "error": "Relation ajoutée en mémoire mais erreur de sauvegarde"
+                    }), 500
+                    
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": f"Impossible d'ajouter la relation: {str(e)}",
+                "suggestion": "Essayez: '[personne] va à [destination]' ou '[personne] séjourne dans [hébergement]'"
+            }), 400
+    
     # Détecter "ajouter/créer"
-    if any(word in question_lower for word in ['ajouter', 'ajoute', 'créer', 'crée', 'nouveau', 'nouvelle']):
+    elif any(word in question_lower for word in ['ajouter', 'ajoute', 'créer', 'crée', 'nouveau', 'nouvelle']):
         try:
             # Utiliser Gemini pour extraire les informations structurées
             if gemini_model:
@@ -542,61 +700,62 @@ Réponds UNIQUEMENT avec le JSON, sans texte avant ou après.
                 if (entity_uri, None, None) in g:
                     return jsonify({
                         "success": False,
-                    "error": f"Une entité avec le nom '{attributes['nom']}' existe déjà"
-                }), 400
-            
-            # Ajouter le type (rdf:type)
-            class_uri = NS[entity_type]
-            g.add((entity_uri, RDF.type, class_uri))
-            
-            # Mapping des propriétés par type d'entité
-            property_mappings = {
-                'Personne': {'nom': 'nomVoyageur', 'age': 'age'},
-                'Destination': {'nom': 'nomDestination', 'pays': 'pays'},
-                'Hébergement': {'nom': 'nomHebergement', 'prix': 'prix', 'capacite': 'capacite', 'type': 'typeHebergement'},
-                'ActivitéTouristique': {'nom': 'nomActivité', 'prix': 'prix', 'duree': 'duree'},
-                'Transport': {'nom': 'nomTransport', 'type': 'typeTransport'},
-                'Services': {'nom': 'nomService', 'prix': 'prix'},
-                'Nourriture': {'nom': 'nomNourriture'},
-                'Equipement': {'nom': 'nomEquipement'},
-                'CertificationÉco': {'nom': 'nomCertification', 'date': 'dateValidite'}
-            }
-            
-            # Ajouter les propriétés de données
-            if entity_type in property_mappings:
-                for attr_key, attr_value in attributes.items():
-                    if attr_key in property_mappings[entity_type]:
-                        property_name = property_mappings[entity_type][attr_key]
-                        property_uri = NS[property_name]
-                        
-                        # Déterminer le type de littéral
-                        if attr_key in ['age', 'prix', 'capacite', 'duree']:
-                            if attr_key == 'prix':
-                                literal = Literal(float(attr_value), datatype=XSD.float)
+                        "error": f"Une entité avec le nom '{attributes['nom']}' existe déjà"
+                    }), 400
+                
+                # Ajouter le type (rdf:type)
+                class_uri = NS[entity_type]
+                g.add((entity_uri, RDF.type, class_uri))
+                
+                # Mapping des propriétés par type d'entité
+                property_mappings = {
+                    'Personne': {'nom': 'nomVoyageur', 'age': 'age'},
+                    'Destination': {'nom': 'nomDestination', 'pays': 'pays'},
+                    'Hébergement': {'nom': 'nomHebergement', 'prix': 'prix', 'capacite': 'capacite', 'type': 'typeHebergement'},
+                    'ActivitéTouristique': {'nom': 'nomActivité', 'prix': 'prix', 'duree': 'duree'},
+                    'Transport': {'nom': 'nomTransport', 'type': 'typeTransport'},
+                    'Services': {'nom': 'nomService', 'prix': 'prix'},
+                    'Nourriture': {'nom': 'nomNourriture'},
+                    'Equipement': {'nom': 'nomEquipement'},
+                    'CertificationÉco': {'nom': 'nomCertification', 'date': 'dateValidite'}
+                }
+                
+                # Ajouter les propriétés de données
+                if entity_type in property_mappings:
+                    for attr_key, attr_value in attributes.items():
+                        if attr_key in property_mappings[entity_type]:
+                            property_name = property_mappings[entity_type][attr_key]
+                            property_uri = NS[property_name]
+                            
+                            # Déterminer le type de littéral
+                            if attr_key in ['age', 'prix', 'capacite', 'duree']:
+                                if attr_key == 'prix':
+                                    literal = Literal(float(attr_value), datatype=XSD.float)
+                                else:
+                                    literal = Literal(int(attr_value), datatype=XSD.integer)
                             else:
-                                literal = Literal(int(attr_value), datatype=XSD.integer)
-                        else:
-                            literal = Literal(attr_value)
-                        
-                        g.add((entity_uri, property_uri, literal))
-            
-            # Sauvegarder dans ws.rdf
-            if save_rdf_to_file():
-                return jsonify({
-                    "success": True,
-                    "action": "create",
-                    "message": f"✅ {entity_type} '{attributes['nom']}' créé avec succès et sauvegardé dans ws.rdf!",
-                    "entity": {
-                        "type": entity_type,
-                        "uri": str(entity_uri),
-                        "attributes": attributes
-                    }
-                })
-            else:
-                return jsonify({
-                    "success": False,
-                    "error": "Entité créée en mémoire mais erreur de sauvegarde dans ws.rdf"
-                }), 500
+                                literal = Literal(attr_value)
+                            
+                            g.add((entity_uri, property_uri, literal))
+                
+                # Sauvegarder dans ws.rdf
+                print(f"[DEBUG] AVANT save_rdf_to_file() - Creation de {attributes.get('nom', 'UNKNOWN')}")
+                if save_rdf_to_file():
+                    return jsonify({
+                        "success": True,
+                        "action": "create",
+                        "message": f"✅ {entity_type} '{attributes['nom']}' créé avec succès et sauvegardé dans ws.rdf!",
+                        "entity": {
+                            "type": entity_type,
+                            "uri": str(entity_uri),
+                            "attributes": attributes
+                        }
+                    })
+                else:
+                    return jsonify({
+                        "success": False,
+                        "error": "Entité créée en mémoire mais erreur de sauvegarde dans ws.rdf"
+                    }), 500
             
         except Exception as e:
             return jsonify({
@@ -692,117 +851,6 @@ Réponds UNIQUEMENT avec le JSON.
                 "suggestion": "Essayez: 'Supprime [type] [nom]'"
             }), 400
     
-    # Détecter les relations entre entités (X va à Y, X choisit Y, etc.)
-    elif any(word in question_lower for word in [' va à ', ' va a ', ' visite ', ' choisit ', ' séjourne dans ', ' utilise ']):
-        try:
-            if gemini_model:
-                prompt = f"""
-Extrais les informations de cette demande de relation entre entités:
-Question: "{question}"
-
-Tu dois retourner UNIQUEMENT un objet JSON avec:
-- sujet_type: le type du sujet (Personne, Destination, etc.)
-- sujet_nom: le nom du sujet
-- relation: la propriété de relation (choisitDestination, séjourneDans, utilise, etc.)
-- objet_type: le type de l'objet
-- objet_nom: le nom de l'objet
-
-Exemples:
-"oumayma va à la Tunisie" -> {{"sujet_type": "Personne", "sujet_nom": "oumayma", "relation": "choisitDestination", "objet_type": "Destination", "objet_nom": "Tunisie"}}
-"Jean séjourne dans Hotel Paris" -> {{"sujet_type": "Personne", "sujet_nom": "Jean", "relation": "séjourneDans", "objet_type": "Hébergement", "objet_nom": "Hotel Paris"}}
-
-Réponds UNIQUEMENT avec le JSON.
-"""
-                response = gemini_model.generate_content(prompt)
-                json_str = response.text.strip().replace('```json', '').replace('```', '').strip()
-                relation_data = json.loads(json_str)
-                
-                # Mapping des propriétés nom
-                name_property_map = {
-                    'Personne': 'nomVoyageur',
-                    'Destination': 'nomDestination',
-                    'Hébergement': 'nomHebergement',
-                    'ActivitéTouristique': 'nomActivité',
-                    'Transport': 'nomTransport',
-                    'Services': 'nomService',
-                    'Nourriture': 'nomNourriture',
-                    'Equipement': 'nomEquipement',
-                    'CertificationÉco': 'nomCertification'
-                }
-                
-                # Trouver le sujet
-                sujet_uri = None
-                sujet_type = relation_data['sujet_type']
-                sujet_nom = relation_data['sujet_nom'].lower()
-                
-                if sujet_type in name_property_map:
-                    name_prop = NS[name_property_map[sujet_type]]
-                    type_uri = NS[sujet_type]
-                    for s, p, o in g.triples((None, RDF.type, type_uri)):
-                        for _, _, nom in g.triples((s, name_prop, None)):
-                            if str(nom).lower() == sujet_nom:
-                                sujet_uri = s
-                                break
-                        if sujet_uri:
-                            break
-                
-                if not sujet_uri:
-                    return jsonify({
-                        "success": False,
-                        "error": f"Entité sujet '{relation_data['sujet_nom']}' non trouvée"
-                    }), 404
-                
-                # Trouver l'objet
-                objet_uri = None
-                objet_type = relation_data['objet_type']
-                objet_nom = relation_data['objet_nom'].lower()
-                
-                if objet_type in name_property_map:
-                    name_prop = NS[name_property_map[objet_type]]
-                    type_uri = NS[objet_type]
-                    for s, p, o in g.triples((None, RDF.type, type_uri)):
-                        for _, _, nom in g.triples((s, name_prop, None)):
-                            if str(nom).lower() == objet_nom:
-                                objet_uri = s
-                                break
-                        if objet_uri:
-                            break
-                
-                if not objet_uri:
-                    return jsonify({
-                        "success": False,
-                        "error": f"Entité objet '{relation_data['objet_nom']}' non trouvée"
-                    }), 404
-                
-                # Ajouter la relation
-                relation_prop = NS[relation_data['relation']]
-                g.add((sujet_uri, relation_prop, objet_uri))
-                
-                # Sauvegarder
-                if save_rdf_to_file():
-                    return jsonify({
-                        "success": True,
-                        "action": "add_relation",
-                        "message": f"✅ Relation ajoutée: '{relation_data['sujet_nom']}' {relation_data['relation']} '{relation_data['objet_nom']}'",
-                        "relation": {
-                            "sujet": {"type": sujet_type, "nom": relation_data['sujet_nom'], "uri": str(sujet_uri)},
-                            "propriete": relation_data['relation'],
-                            "objet": {"type": objet_type, "nom": relation_data['objet_nom'], "uri": str(objet_uri)}
-                        }
-                    })
-                else:
-                    return jsonify({
-                        "success": False,
-                        "error": "Relation ajoutée en mémoire mais erreur de sauvegarde"
-                    }), 500
-                    
-        except Exception as e:
-            return jsonify({
-                "success": False,
-                "error": f"Impossible d'ajouter la relation: {str(e)}",
-                "suggestion": "Essayez: '[personne] va à [destination]' ou '[personne] séjourne dans [hébergement]'"
-            }), 400
-    
     # Détecter "modifier/changer"
     elif any(word in question_lower for word in ['modifier', 'modifie', 'changer', 'change', 'mettre à jour', 'update']):
         try:
@@ -864,8 +912,6 @@ Réponds UNIQUEMENT avec le JSON.
                         "success": False,
                         "error": f"Entité '{update_data['nom']}' non trouvée"
                     }), 404
-                
-                from rdflib import XSD
                 
                 # Mapping des propriétés
                 property_mappings = {
@@ -1133,14 +1179,20 @@ Réponds UNIQUEMENT avec le JSON.
 # ========================================
 
 def save_rdf_to_file():
-    """Sauvegarder le graphe RDF dans ws.rdf"""
-    try:
-        g.serialize(destination="../ws.rdf", format="xml", encoding="utf-8")
-        print("✅ ws.rdf sauvegardé avec succès!")
-        return True
-    except Exception as e:
-        print(f"❌ Erreur lors de la sauvegarde: {e}")
-        return False
+    """Sauvegarder le graphe RDF dans ws.rdf et recharger"""
+    print(">>> DEBUT save_rdf_to_file()")
+    global g
+    # Sauvegarder
+    g.serialize(destination="../ws.rdf", format="xml", encoding="utf-8")
+    print("SAVE: ws.rdf sauvegarde OK")
+    
+    # Recharger IMMÉDIATEMENT dans un nouveau graphe
+    new_graph = Graph()
+    new_graph.parse("../ws.rdf", format="xml")
+    g = new_graph
+    print(f"RELOAD: Graphe recharge OK - {len(g)} triplets")
+    
+    return True
 
 def generate_uri(class_name, name):
     """Générer un URI unique pour une nouvelle instance"""
@@ -1198,7 +1250,6 @@ def create_entity():
                     
                     # Déterminer le type de littéral
                     if attr_key in ['age', 'prix', 'capacite', 'duree']:
-                        from rdflib import XSD
                         if attr_key == 'prix':
                             literal = Literal(float(attr_value), datatype=XSD.float)
                         else:
@@ -1269,7 +1320,6 @@ def update_entity():
                 
                 # Ajouter la nouvelle valeur
                 if attr_key in ['age', 'prix', 'capacite', 'duree']:
-                    from rdflib import XSD
                     if attr_key == 'prix':
                         literal = Literal(float(attr_value), datatype=XSD.float)
                     else:
